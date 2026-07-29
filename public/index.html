@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Duyuru Takip</title>
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#1c1c1e" />
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --ink: #1c1c1e;
+    --muted: #6b6b70;
+    --line: #e4e4e0;
+    --accent: #2f6f4f;
+    --danger: #b3413a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    padding: 24px 16px 64px;
+  }
+  .wrap { max-width: 480px; margin: 0 auto; }
+  h1 {
+    font-size: 22px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin: 8px 0 4px;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 14px;
+    margin: 0 0 28px;
+    line-height: 1.5;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+    margin: 18px 0 6px;
+  }
+  input[type="text"], input[type="url"] {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    font-size: 15px;
+    color: var(--ink);
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  button {
+    margin-top: 24px;
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 10px;
+    background: var(--accent);
+    color: white;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #status {
+    margin-top: 16px;
+    font-size: 13px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    display: none;
+  }
+  #status.ok { display: block; background: #e8f3ec; color: var(--accent); }
+  #status.err { display: block; background: #f6e9e8; color: var(--danger); }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 20px;
+    margin-top: 20px;
+  }
+  .list-item {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 14px;
+  }
+  .list-item:last-child { border-bottom: none; }
+  .list-item .url { color: var(--muted); font-size: 12px; word-break: break-all; }
+  .remove {
+    background: transparent;
+    color: var(--danger);
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 24px;
+    padding: 0;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Duyuru Takip</h1>
+  <p class="sub">Üniversitenin duyurular sayfasının adresini yapıştır, izlemek istediğin anahtar kelimeyi gir. Eşleşen yeni bir duyuru yayınlandığında telefonuna bildirim gelir.</p>
+
+  <form id="watchForm">
+    <label for="url">Duyurular sayfası adresi (URL)</label>
+    <input type="url" id="url" placeholder="https://universite.edu.tr/duyurular" required />
+
+    <label for="keywords">Anahtar kelimeler (virgülle ayır, boş bırakılabilir)</label>
+    <input type="text" id="keywords" placeholder="ders seçimi, final programı" />
+    <div class="hint">Boş bırakırsan sayfadaki her yeni duyuru için bildirim alırsın.</div>
+
+    <button type="submit" id="submitBtn">Takibi başlat</button>
+  </form>
+
+  <div id="status"></div>
+
+  <div class="card" id="listCard" style="display:none">
+    <label style="margin-top:0">Aktif takipler (bu cihaz)</label>
+    <div id="list"></div>
+  </div>
+</div>
+
+<script>
+  const form = document.getElementById("watchForm");
+  const statusEl = document.getElementById("status");
+  const submitBtn = document.getElementById("submitBtn");
+  const listCard = document.getElementById("listCard");
+  const listEl = document.getElementById("list");
+
+  function showStatus(msg, ok) {
+    statusEl.textContent = msg;
+    statusEl.className = ok ? "ok" : "err";
+  }
+
+  function urlBase64ToUint8Array(base64String) {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const rawData = atob(base64);
+    return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+  }
+
+  function getLocalWatches() {
+    return JSON.parse(localStorage.getItem("watches") || "[]");
+  }
+  function saveLocalWatches(w) {
+    localStorage.setItem("watches", JSON.stringify(w));
+  }
+
+  function renderList() {
+    const watches = getLocalWatches();
+    if (watches.length === 0) {
+      listCard.style.display = "none";
+      return;
+    }
+    listCard.style.display = "block";
+    listEl.innerHTML = "";
+    watches.forEach((w) => {
+      const div = document.createElement("div");
+      div.className = "list-item";
+      div.innerHTML = `
+        <div>${w.keywords.length ? w.keywords.join(", ") : "Tüm yeni duyurular"}</div>
+        <div class="url">${w.url}</div>
+      `;
+      listEl.appendChild(div);
+    });
+  }
+
+  async function registerAndSubscribe(url, keywords) {
+    const reg = await navigator.serviceWorker.register("sw.js");
+    await navigator.serviceWorker.ready;
+
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      throw new Error("Bildirim izni verilmedi. Bildirim alabilmek için izin gerekli.");
+    }
+
+    const keyRes = await fetch("/api/vapid-public-key");
+    const { publicKey } = await keyRes.json();
+
+    let subscription = await reg.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+    }
+
+    const res = await fetch("/api/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, keywords, subscription }),
+    });
+
+    if (!res.ok) throw new Error("Sunucuya kaydedilemedi.");
+    return res.json();
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    submitBtn.disabled = true;
+    statusEl.style.display = "none";
+
+    const url = document.getElementById("url").value.trim();
+    const keywords = document
+      .getElementById("keywords")
+      .value.split(",")
+      .map((k) => k.trim())
+      .filter(Boolean);
+
+    try {
+      await registerAndSubscribe(url, keywords);
+      const watches = getLocalWatches();
+      watches.push({ url, keywords });
+      saveLocalWatches(watches);
+      renderList();
+      showStatus("Takip başlatıldı. Yeni bir duyuru bulunduğunda bildirim alacaksın.", true);
+      form.reset();
+    } catch (err) {
+      showStatus(err.message || "Bir şeyler ters gitti.", false);
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  renderList();
+</script>
+</body>
+</html>
