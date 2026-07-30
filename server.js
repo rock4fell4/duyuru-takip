@@ -26,7 +26,10 @@ if (!MONGODB_URI) {
 let watchesCollection;
 
 async function connectDB() {
-  const client = new MongoClient(MONGODB_URI);
+  const client = new MongoClient(MONGODB_URI, {
+    serverSelectionTimeoutMS: 10000,
+    connectTimeoutMS: 10000,
+  });
   await client.connect();
   const db = client.db("duyurutakip");
   watchesCollection = db.collection("watches");
