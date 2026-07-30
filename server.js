@@ -81,6 +81,23 @@ app.post("/api/subscribe", async (req, res) => {
   }
 });
 
+// ---- Bir cihazın kendi takiplerini listelemesi için ----
+app.get("/api/watches", async (req, res) => {
+  const { endpoint } = req.query;
+  if (!endpoint) return res.json({ watches: [] });
+
+  try {
+    const watches = await watchesCollection
+      .find({ "subscription.endpoint": endpoint })
+      .project({ url: 1, keywords: 1 })
+      .toArray();
+    res.json({ watches });
+  } catch (e) {
+    console.error("Liste alınamadı:", e.message);
+    res.status(500).json({ error: "Liste alınamadı" });
+  }
+});
+
 // ---- Kayıtlı izlemeyi silme ----
 app.delete("/api/subscribe/:id", async (req, res) => {
   try {
