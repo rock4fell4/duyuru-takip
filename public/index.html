@@ -88,17 +88,35 @@
     padding: 12px 0;
     border-bottom: 1px solid var(--line);
     font-size: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
   }
   .list-item:last-child { border-bottom: none; }
+  .list-item .info { min-width: 0; }
   .list-item .url { color: var(--muted); font-size: 12px; word-break: break-all; }
-  .remove {
+  .delete-btn {
+    flex-shrink: 0;
     background: transparent;
     color: var(--danger);
-    border: none;
+    border: 1px solid var(--danger);
+    border-radius: 8px;
     font-size: 12px;
     font-weight: 600;
+    padding: 6px 10px;
+    cursor: pointer;
+    margin-top: 0;
+  }
+  .ad-box {
     margin-top: 24px;
-    padding: 0;
+    border: 1px dashed var(--line);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+    background: #fafaf8;
   }
 </style>
 </head>
@@ -124,6 +142,13 @@
     <label style="margin-top:0">Aktif takipler (bu cihaz)</label>
     <div id="list"></div>
   </div>
+
+  <!--
+    REKLAM ALANI
+    Buraya kendi reklam servisinden (örn. Google AdSense) aldığın kodu
+    yapıştırabilirsin. Şu an sadece yer tutucu bir kutu gösteriliyor.
+  -->
+  <div class="ad-box" id="adBox">Reklam Alanı</div>
 </div>
 
 <script>
@@ -145,15 +170,33 @@
     return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
   }
 
-  function getLocalWatches() {
-    return JSON.parse(localStorage.getItem("watches") || "[]");
-  }
-  function saveLocalWatches(w) {
-    localStorage.setItem("watches", JSON.stringify(w));
+  async function getCurrentEndpoint() {
+    if (!("serviceWorker" in navigator)) return null;
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) return null;
+    const sub = await reg.pushManager.getSubscription();
+    return sub ? sub.endpoint : null;
   }
 
-  function renderList() {
-    const watches = getLocalWatches();
+  async function renderList() {
+    const endpoint = await getCurrentEndpoint();
+    if (!endpoint) {
+      listCard.style.display = "none";
+      return;
+    }
+
+    let watches = [];
+    try {
+      const res = await fetch(
+        "/api/watches?endpoint=" + encodeURIComponent(endpoint)
+      );
+      const data = await res.json();
+      watches = data.watches || [];
+    } catch (e) {
+      listCard.style.display = "none";
+      return;
+    }
+
     if (watches.length === 0) {
       listCard.style.display = "none";
       return;
@@ -164,10 +207,25 @@
       const div = document.createElement("div");
       div.className = "list-item";
       div.innerHTML = `
-        <div>${w.keywords.length ? w.keywords.join(", ") : "Tüm yeni duyurular"}</div>
-        <div class="url">${w.url}</div>
+        <div class="info">
+          <div>${w.keywords && w.keywords.length ? w.keywords.join(", ") : "Tüm yeni duyurular"}</div>
+          <div class="url">${w.url}</div>
+        </div>
+        <button class="delete-btn" data-id="${w._id}">Sil</button>
       `;
       listEl.appendChild(div);
+    });
+
+    listEl.querySelectorAll(".delete-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await fetch("/api/subscribe/" + btn.dataset.id, { method: "DELETE" });
+          await renderList();
+        } catch (e) {
+          btn.disabled = false;
+        }
+      });
     });
   }
 
@@ -215,10 +273,7 @@
 
     try {
       await registerAndSubscribe(url, keywords);
-      const watches = getLocalWatches();
-      watches.push({ url, keywords });
-      saveLocalWatches(watches);
-      renderList();
+      await renderList();
       showStatus("Takip başlatıldı. Yeni bir duyuru bulunduğunda bildirim alacaksın.", true);
       form.reset();
     } catch (err) {
