@@ -5,18 +5,33 @@
 
 const express = require("express");
 const cors = require("cors");
-const fs = require("fs");
 const path = require("path");
 const webpush = require("web-push");
 const cheerio = require("cheerio");
-const crypto = require("crypto");
+const { MongoClient, ObjectId } = require("mongodb");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-const DATA_FILE = path.join(__dirname, "watches.json");
+// ---- MongoDB bağlantısı (kalıcı depolama) ----
+// MONGODB_URI ortam değişkeni MongoDB Atlas'tan alınan bağlantı adresidir.
+// Bu sayede sunucu kaç kere yeniden başlarsa başlasın kayıtlar silinmez.
+const MONGODB_URI = process.env.MONGODB_URI;
+if (!MONGODB_URI) {
+  console.error("HATA: MONGODB_URI ortam değişkeni tanımlı değil.");
+}
+
+let watchesCollection;
+
+async function connectDB() {
+  const client = new MongoClient(MONGODB_URI);
+  await client.connect();
+  const db = client.db("duyurutakip");
+  watchesCollection = db.collection("watches");
+  console.log("MongoDB'ye bağlanıldı.");
+}
 
 // ---- VAPID anahtarları (Web Push için gerekli) ----
 // Bunları kendin üretmelisin: `npx web-push generate-vapid-keys`
@@ -31,37 +46,20 @@ webpush.setVapidDetails(
   VAPID_PRIVATE_KEY
 );
 
-// ---- Basit dosya tabanlı depolama ----
-function loadWatches() {
-  if (!fs.existsSync(DATA_FILE)) return [];
-  try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
-  } catch (e) {
-    return [];
-  }
-}
-
-function saveWatches(watches) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(watches, null, 2), "utf-8");
-}
-
 // ---- Frontend'in public key alması için ----
 app.get("/api/vapid-public-key", (req, res) => {
   res.json({ publicKey: VAPID_PUBLIC_KEY });
 });
 
 // ---- Yeni izleme kaydı oluşturma ----
-app.post("/api/subscribe", (req, res) => {
+app.post("/api/subscribe", async (req, res) => {
   const { url, keywords, subscription } = req.body;
 
   if (!url || !subscription) {
     return res.status(400).json({ error: "url ve subscription zorunludur" });
   }
 
-  const watches = loadWatches();
-
   const newWatch = {
-    id: crypto.randomUUID(),
     url,
     keywords: Array.isArray(keywords)
       ? keywords.map((k) => k.trim().toLocaleLowerCase("tr")).filter(Boolean)
@@ -71,17 +69,23 @@ app.post("/api/subscribe", (req, res) => {
     createdAt: new Date().toISOString(),
   };
 
-  watches.push(newWatch);
-  saveWatches(watches);
-
-  res.json({ ok: true, id: newWatch.id });
+  try {
+    const result = await watchesCollection.insertOne(newWatch);
+    res.json({ ok: true, id: result.insertedId });
+  } catch (e) {
+    console.error("Kayıt eklenemedi:", e.message);
+    res.status(500).json({ error: "Kayıt eklenemedi" });
+  }
 });
 
 // ---- Kayıtlı izlemeyi silme ----
-app.delete("/api/subscribe/:id", (req, res) => {
-  const watches = loadWatches().filter((w) => w.id !== req.params.id);
-  saveWatches(watches);
-  res.json({ ok: true });
+app.delete("/api/subscribe/:id", async (req, res) => {
+  try {
+    await watchesCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: "Silinemedi" });
+  }
 });
 
 // ---- Bir sayfadaki olası duyuru metinlerini çıkarma ----
@@ -124,7 +128,7 @@ async function checkWatch(watch) {
   try {
     currentTexts = await extractAnnouncementTexts(watch.url);
   } catch (e) {
-    console.error(`[${watch.id}] Sayfa okunamadı:`, e.message);
+    console.error(`[${watch._id}] Sayfa okunamadı:`, e.message);
     return;
   }
 
@@ -155,24 +159,32 @@ async function checkWatch(watch) {
           })
         );
       } catch (e) {
-        console.error(`[${watch.id}] Bildirim gönderilemedi:`, e.message);
+        console.error(`[${watch._id}] Bildirim gönderilemedi:`, e.message);
       }
     }
   }
 
   // Görülenler listesini güncelle (çok büyümesin diye son 500 ile sınırla)
-  watch.seenItems = Array.from(new Set([...watch.seenItems, ...currentTexts])).slice(
-    -500
+  const updatedSeenItems = Array.from(
+    new Set([...watch.seenItems, ...currentTexts])
+  ).slice(-500);
+
+  await watchesCollection.updateOne(
+    { _id: watch._id },
+    { $set: { seenItems: updatedSeenItems } }
   );
 }
 
 // ---- Tüm izlemeleri kontrol et ----
 async function checkAllWatches() {
-  const watches = loadWatches();
+  const watches = await watchesCollection.find({}).toArray();
   for (const watch of watches) {
-    await checkWatch(watch);
+    try {
+      await checkWatch(watch);
+    } catch (e) {
+      console.error(`[${watch._id}] Kontrol hatası:`, e.message);
+    }
   }
-  saveWatches(watches);
 }
 
 // Dışarıdan (örn. cron-job.org) tetiklenebilecek uç nokta.
@@ -190,6 +202,15 @@ setInterval(() => {
 }, CHECK_INTERVAL_MS);
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Sunucu ${PORT} portunda çalışıyor`);
-});
+
+// Önce veritabanına bağlan, sonra sunucuyu başlat.
+connectDB()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Sunucu ${PORT} portunda çalışıyor`);
+    });
+  })
+  .catch((e) => {
+    console.error("MongoDB bağlantısı kurulamadı:", e.message);
+    process.exit(1);
+  });
