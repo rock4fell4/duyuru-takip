@@ -26,7 +26,10 @@ if (!MONGODB_URI) {
 let watchesCollection;
 
 async function connectDB() {
-  const client = new MongoClient(MONGODB_URI);
+  const client = new MongoClient(MONGODB_URI, {
+    serverSelectionTimeoutMS: 10000,
+    connectTimeoutMS: 10000,
+  });
   await client.connect();
   const db = client.db("duyurutakip");
   watchesCollection = db.collection("watches");
@@ -78,6 +81,23 @@ app.post("/api/subscribe", async (req, res) => {
   }
 });
 
+// ---- Bir cihazın kendi takiplerini listelemesi için ----
+app.get("/api/watches", async (req, res) => {
+  const { endpoint } = req.query;
+  if (!endpoint) return res.json({ watches: [] });
+
+  try {
+    const watches = await watchesCollection
+      .find({ "subscription.endpoint": endpoint })
+      .project({ url: 1, keywords: 1 })
+      .toArray();
+    res.json({ watches });
+  } catch (e) {
+    console.error("Liste alınamadı:", e.message);
+    res.status(500).json({ error: "Liste alınamadı" });
+  }
+});
+
 // ---- Kayıtlı izlemeyi silme ----
 app.delete("/api/subscribe/:id", async (req, res) => {
   try {
@@ -95,7 +115,10 @@ async function extractAnnouncementTexts(url) {
   const response = await fetch(url, {
     headers: {
       "User-Agent":
-        "Mozilla/5.0 (compatible; DuyuruTakipBot/1.0; +https://example.com)",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      Accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+      "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
     },
   });
 
