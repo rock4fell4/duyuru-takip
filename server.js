@@ -49,6 +49,22 @@ webpush.setVapidDetails(
   VAPID_PRIVATE_KEY
 );
 
+// ---- Android uygulamasının bu siteyle bağlantılı olduğunu doğrulamak için ----
+app.get("/.well-known/assetlinks.json", (req, res) => {
+  res.json([
+    {
+      relation: ["delegate_permission/common.handle_all_urls"],
+      target: {
+        namespace: "android_app",
+        package_name: "com.duyurutakip.app",
+        sha256_cert_fingerprints: [
+          "E6:05:A4:09:56:8B:06:A0:14:CB:05:E9:C5:1C:7A:A3:10:CC:88:0E:5A:09:3C:A2:73:52:41:E2:BE:04:1F:BE",
+        ],
+      },
+    },
+  ]);
+});
+
 // ---- Frontend'in public key alması için ----
 app.get("/api/vapid-public-key", (req, res) => {
   res.json({ publicKey: VAPID_PUBLIC_KEY });
