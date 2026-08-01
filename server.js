@@ -188,11 +188,18 @@ async function checkWatch(watch) {
       : newTexts; // anahtar kelime yoksa her yeni duyuru bildirilir
 
     for (const match of keywordMatches) {
+      let siteName = watch.url;
+      try {
+        siteName = new URL(watch.url).hostname;
+      } catch (e) {
+        // URL ayrıştırılamazsa olduğu gibi bırak
+      }
+
       try {
         await webpush.sendNotification(
           watch.subscription,
           JSON.stringify({
-            title: "Yeni duyuru bulundu",
+            title: `Yeni duyuru: ${siteName}`,
             body: match.slice(0, 150),
             url: watch.url,
           })
